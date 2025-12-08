@@ -75,11 +75,14 @@ function calculateValuationMetrics(data) {
   const metrics = {};
   let verdictScores = [];
 
-  // 1. EV/EBITDA Analysis
+  // 1. EV/EBITDA Analysis (user-specified rule: threshold 20)
   if (ebitda && ebitda > 0) {
     metrics.evEbitda = ev / ebitda;
-    const evEbitdaVerdict = metrics.evEbitda < 15 ? 'undervalued' : metrics.evEbitda > 25 ? 'overvalued' : 'fairly valued';
+    let evEbitdaVerdict = 'fairly valued';
+    if (metrics.evEbitda < 20) evEbitdaVerdict = 'undervalued';
+    else if (metrics.evEbitda > 20) evEbitdaVerdict = 'overvalued';
     verdictScores.push({ metric: 'EV/EBITDA', value: metrics.evEbitda.toFixed(2), verdict: evEbitdaVerdict, weight: 1 });
+    metrics.evEbitdaExplanation = 'EV/EBITDA is a popular valuation multiple used to compare a company’s value to its operational profitability, independent of capital structure and non-cash expenses.';
   }
 
   // 2. Price to Earnings (P/E) Analysis via Market Cap to Net Income
@@ -111,6 +114,18 @@ function calculateValuationMetrics(data) {
     metrics.fcfYield = (operatingCashFlow / marketCap) * 100;
     const fcfYieldVerdict = metrics.fcfYield > 5 ? 'undervalued' : metrics.fcfYield < 2 ? 'overvalued' : 'fairly valued';
     verdictScores.push({ metric: 'FCF Yield', value: metrics.fcfYield.toFixed(2) + '%', verdict: fcfYieldVerdict, weight: 1 });
+  }
+
+  // 7. Cash Flow Based Valuation Range (OCF * 30 to 35)
+  if (operatingCashFlow && operatingCashFlow > 0) {
+    metrics.cashFlowLower = operatingCashFlow * 30;
+    metrics.cashFlowUpper = operatingCashFlow * 35;
+    let cfVerdict = 'fairly valued';
+    if (marketCap >= metrics.cashFlowLower && marketCap <= metrics.cashFlowUpper) cfVerdict = 'fairly valued';
+    else if (marketCap < metrics.cashFlowLower) cfVerdict = 'undervalued';
+    else if (marketCap > metrics.cashFlowUpper) cfVerdict = 'overvalued';
+    verdictScores.push({ metric: 'CashFlowMultiple', value: `${metrics.cashFlowLower.toFixed(0)} - ${metrics.cashFlowUpper.toFixed(0)}`, verdict: cfVerdict, weight: 1 });
+    metrics.cashFlowExplanation = 'This is a simplified cash flow multiple valuation. High-quality companies often trade at 30–35× operating cash flow.';
   }
 
   // 6. Debt to Equity Ratio
@@ -177,6 +192,88 @@ function calculateOverallValuation(verdictScores) {
   return { verdict, confidence, reasoning };
 }
 
+// Generate combined interpretation string using EV/EBITDA and Cash Flow verdicts
+function generateCombinedSummary(metrics, verdicts) {
+  const evVerdictObj = verdicts.find(v => v.metric === 'EV/EBITDA');
+  const cfVerdictObj = verdicts.find(v => v.metric === 'CashFlowMultiple');
+
+  const evText = evVerdictObj ? evVerdictObj.verdict : 'insufficient data for EV/EBITDA';
+  const cfText = cfVerdictObj ? cfVerdictObj.verdict : 'insufficient data for cash flow multiple';
+
+  let summary = `EV/EBITDA suggests the stock is ${evText}, and the cash flow valuation range indicates it is ${cfText}.`;
+
+  // Make the final phrasing nicer when both agree
+  if (evVerdictObj && cfVerdictObj && evVerdictObj.verdict === cfVerdictObj.verdict) {
+    summary = `Both EV/EBITDA and the cash flow valuation range indicate the stock is ${evVerdictObj.verdict}. Overall, this stock appears ${evVerdictObj.verdict} based on these metrics.`;
+  }
+
+  return summary;
+}
+
+// POST handler: accepts JSON body with either { ticker } OR raw numbers { ev, ebitda, operatingCashFlow, marketCap }
+export async function POST(request) {
+  try {
+    const body = await request.json();
+
+    let data;
+    if (body.ticker) {
+      data = await fetchFinancialData(body.ticker);
+    } else {
+      // Validate raw inputs
+      const required = ['ev', 'ebitda', 'operatingCashFlow', 'marketCap'];
+      for (const key of required) {
+        if (body[key] === undefined || body[key] === null || isNaN(Number(body[key]))) {
+          return NextResponse.json({ error: `Missing or invalid field: ${key}` }, { status: 400 });
+        }
+      }
+
+      data = {
+        ev: Number(body.ev),
+        ebitda: Number(body.ebitda),
+        operatingCashFlow: Number(body.operatingCashFlow),
+        marketCap: Number(body.marketCap),
+        totalAssets: Number(body.totalAssets) || 0,
+        totalLiabilities: Number(body.totalLiabilities) || 0,
+        netIncome: Number(body.netIncome) || 0,
+        totalRevenue: Number(body.totalRevenue) || 0,
+        companyName: body.companyName || null,
+        sector: body.sector || null
+      };
+    }
+
+    const { metrics, verdictScores } = calculateValuationMetrics(data);
+    const overallValuation = calculateOverallValuation(verdictScores);
+    const combinedSummary = generateCombinedSummary(metrics, verdictScores);
+
+    const response = {
+      ticker: body.ticker ? String(body.ticker).toUpperCase() : null,
+      companyName: data.companyName || null,
+      sector: data.sector || null,
+      rawData: {
+        marketCap: data.marketCap,
+        enterpriseValue: data.ev,
+        netIncome: data.netIncome,
+        revenue: data.totalRevenue,
+        operatingCashFlow: data.operatingCashFlow,
+        totalAssets: data.totalAssets,
+        totalLiabilities: data.totalLiabilities
+      },
+      metrics,
+      verdicts: verdictScores,
+      overall: {
+        verdict: overallValuation.verdict,
+        confidence: overallValuation.confidence,
+        reasoning: overallValuation.reasoning
+      },
+      interpretation: combinedSummary
+    };
+
+    return NextResponse.json(response);
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const ticker = searchParams.get('ticker');
@@ -189,6 +286,8 @@ export async function GET(request) {
     const data = await fetchFinancialData(ticker);
     const { metrics, verdictScores } = calculateValuationMetrics(data);
     const overallValuation = calculateOverallValuation(verdictScores);
+
+    const combinedSummary = generateCombinedSummary(metrics, verdictScores);
 
     const response = {
       ticker: ticker.toUpperCase(),
@@ -210,7 +309,7 @@ export async function GET(request) {
         confidence: overallValuation.confidence,
         reasoning: overallValuation.reasoning
       },
-      interpretation: overallValuation.reasoning
+      interpretation: combinedSummary
     };
 
     return NextResponse.json(response);

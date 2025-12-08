@@ -93,6 +93,30 @@ Returns valuation analysis for the specified stock ticker.
 
 ## Valuation Methodology
 
+### POST /api/valuation
+
+Accepts JSON body with either `{ "ticker": "AAPL" }` or raw numeric inputs:
+
+```json
+{
+  "ev": 2500000000000,
+  "ebitda": 120000000000,
+  "operatingCashFlow": 100000000000,
+  "marketCap": 2400000000000
+}
+```
+
+Example `curl`:
+
+```bash
+curl -X POST http://localhost:3000/api/valuation \
+  -H "Content-Type: application/json" \
+  -d '{"ev":2500000000000,"ebitda":120000000000,"operatingCashFlow":100000000000,"marketCap":2400000000000}'
+```
+
+The response JSON matches the GET response format and includes an `interpretation` string that combines the EV/EBITDA and cash-flow multiple results.
+
+
 ### EV/EBITDA Analysis
 - **Formula**: EV / EBITDA
 - **Undervalued**: EV/EBITDA < 20
