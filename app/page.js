@@ -347,6 +347,43 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Footer */}
+      <footer className={`border-t transition-colors duration-300 ${
+        darkMode
+          ? 'bg-slate-800 border-slate-700'
+          : 'bg-white border-slate-200'
+      }`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col md:flex-row justify-between items-center">
+            <p className={`text-sm font-medium ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+              © 2025 Stock Valuation Website. All rights reserved.
+            </p>
+            <div className="flex gap-6 mt-4 md:mt-0">
+              <a
+                href="https://github.com/roosteram25"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`text-sm font-medium hover:text-blue-600 transition-colors ${
+                  darkMode ? 'text-slate-400 hover:text-blue-400' : 'text-slate-600 hover:text-blue-600'
+                }`}
+              >
+                GitHub: roosteram25
+              </a>
+              <a
+                href="https://github.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`text-sm font-medium hover:text-blue-600 transition-colors ${
+                  darkMode ? 'text-slate-400 hover:text-blue-400' : 'text-slate-600 hover:text-blue-600'
+                }`}
+              >
+                GitHub: Your Profile
+              </a>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
