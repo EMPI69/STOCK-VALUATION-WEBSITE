@@ -1,15 +1,66 @@
 import { NextResponse } from 'next/server';
+import { resolveTickerOrCompanyName, clearResolutionCache, getCacheStats } from '../../../lib/tickerResolution.js';
+import { enhanceQueryWithTicker, generateValuationAnalysis, isOpenAIConfigured } from '../../../lib/openaiService.js';
+import { getDemoData, hasDemoData } from '../../../lib/demoData.js';
 
-// Alpha Vantage API key - put your key here
-const API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
+// Alpha Vantage API key
+const API_KEY = process.env.NEXT_PUBLIC_ALPHA_VANTAGE_API_KEY || process.env.ALPHA_VANTAGE_API_KEY;
 const BASE_URL = 'https://www.alphavantage.co/query';
+
+// Function to fetch real-time price and 7-day history
+async function fetchPriceHistory(ticker) {
+  try {
+    if (!API_KEY) {
+      console.warn('Alpha Vantage API key not configured, returning null for price history');
+      return null;
+    }
+
+    // Fetch daily time series data
+    const response = await fetch(
+      `${BASE_URL}?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${API_KEY}&outputsize=compact`
+    );
+    const data = await response.json();
+
+    if (data.Note || data.Error) {
+      console.warn(`Price history API error: ${data.Note || data.Error}`);
+      return null;
+    }
+
+    if (!data['Time Series (Daily)']) {
+      console.warn(`No time series data for ${ticker}`);
+      return null;
+    }
+
+    // Get last 7 trading days (5 business days in the week)
+    const timeSeries = data['Time Series (Daily)'];
+    const dates = Object.keys(timeSeries).slice(0, 7); // Get last 7 days
+    
+    const priceHistory = dates.map((date) => {
+      const dayData = timeSeries[date];
+      const price = parseFloat(dayData['4. close']);
+      const dateObj = new Date(date);
+      const displayDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayOfWeek = dateObj.getDay();
+      
+      return { date, displayDate, price, dayOfWeek };
+    }).reverse(); // Reverse to show oldest to newest
+
+    return priceHistory.length > 0 ? priceHistory : null;
+  } catch (error) {
+    console.error('Error fetching price history:', error);
+    return null;
+  }
+}
 
 // Function to fetch financial data
 async function fetchFinancialData(ticker) {
   try {
+    console.log(`Fetching financial data for ticker: ${ticker}`);
+    
     // Fetch income statement
     const incomeResponse = await fetch(`${BASE_URL}?function=INCOME_STATEMENT&symbol=${ticker}&apikey=${API_KEY}`);
     const incomeData = await incomeResponse.json();
+    console.log(`Income statement response:`, { hasAnnualReports: !!incomeData.annualReports, hasNote: !!incomeData.Note });
 
     // Fetch balance sheet
     const balanceResponse = await fetch(`${BASE_URL}?function=BALANCE_SHEET&symbol=${ticker}&apikey=${API_KEY}`);
@@ -23,8 +74,38 @@ async function fetchFinancialData(ticker) {
     const quoteResponse = await fetch(`${BASE_URL}?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${API_KEY}`);
     const quoteData = await quoteResponse.json();
 
+    // Check for API rate limit or error messages
+    if (incomeData.Note || balanceData.Note || cashFlowData.Note || quoteData.Note) {
+      const message = incomeData.Note || balanceData.Note || cashFlowData.Note || quoteData.Note;
+      console.error(`API rate limit or error: ${message}`);
+      throw new Error('Alpha Vantage API: ' + message);
+    }
+
+    if (incomeData.Information || balanceData.Information || cashFlowData.Information || quoteData.Information) {
+      const message = incomeData.Information || balanceData.Information || cashFlowData.Information || quoteData.Information;
+      console.error(`API information message: ${message}`);
+      throw new Error('API error: ' + message);
+    }
+
     if (!incomeData.annualReports || !balanceData.annualReports || !cashFlowData.annualReports || !quoteData['Global Quote']) {
-      throw new Error('Invalid data received from API');
+      const missingData = [];
+      if (!incomeData.annualReports) {
+        missingData.push('income statement');
+        console.log('Income data:', { keys: Object.keys(incomeData).slice(0, 5) });
+      }
+      if (!balanceData.annualReports) {
+        missingData.push('balance sheet');
+        console.log('Balance data:', { keys: Object.keys(balanceData).slice(0, 5) });
+      }
+      if (!cashFlowData.annualReports) {
+        missingData.push('cash flow');
+        console.log('Cash flow data:', { keys: Object.keys(cashFlowData).slice(0, 5) });
+      }
+      if (!quoteData['Global Quote']) {
+        missingData.push('quote data');
+        console.log('Quote data:', { keys: Object.keys(quoteData).slice(0, 5) });
+      }
+      throw new Error(`Could not fetch: ${missingData.join(', ')}. Could not retrieve financial data for ticker "${ticker}". This may indicate the ticker is invalid, data is unavailable, or the Alpha Vantage API is rate limited.`);
     }
 
     // Get latest annual data
@@ -48,7 +129,12 @@ async function fetchFinancialData(ticker) {
     const finnhubResponse = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${FINNHUB_API_KEY}`);
     const finnhubData = await finnhubResponse.json();
 
-    const marketCap = finnhubData.marketCapitalization * 1000000; // in millions
+    // Check if Finnhub returned valid data
+    if (!finnhubData || !finnhubData.marketCapitalization) {
+      console.warn(`Finnhub data incomplete for ${ticker}, using fallback calculation`);
+    }
+
+    const marketCap = finnhubData.marketCapitalization ? finnhubData.marketCapitalization * 1000000 : 0; // in millions
     const ev = marketCap + totalDebt - cashAndEquivalents;
 
     return {
@@ -215,9 +301,29 @@ export async function POST(request) {
   try {
     const body = await request.json();
 
+    let ticker = body.ticker;
     let data;
-    if (body.ticker) {
-      data = await fetchFinancialData(body.ticker);
+
+    // If ticker input is provided, resolve it first
+    if (ticker && typeof ticker === 'string') {
+      const resolution = await resolveTickerOrCompanyName(ticker, {
+        exchange: body.exchange || null,
+        provider: body.provider || 'auto'
+      });
+
+      if (!resolution.ticker) {
+        return NextResponse.json({
+          error: 'ticker_not_found',
+          message: `Could not resolve "${ticker}" to a ticker symbol`
+        }, { status: 404 });
+      }
+
+      ticker = resolution.ticker;
+      data = await fetchFinancialData(ticker);
+    } else if (body.ticker) {
+      // Direct ticker provided
+      data = await fetchFinancialData(body.ticker.toUpperCase());
+      ticker = body.ticker.toUpperCase();
     } else {
       // Validate raw inputs
       const required = ['ev', 'ebitda', 'operatingCashFlow', 'marketCap'];
@@ -246,7 +352,7 @@ export async function POST(request) {
     const combinedSummary = generateCombinedSummary(metrics, verdictScores);
 
     const response = {
-      ticker: body.ticker ? String(body.ticker).toUpperCase() : null,
+      ticker: ticker || null,
       companyName: data.companyName || null,
       sector: data.sector || null,
       rawData: {
@@ -276,23 +382,84 @@ export async function POST(request) {
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
-  const ticker = searchParams.get('ticker');
+  let input = searchParams.get('ticker');
+  const includeAIAnalysis = searchParams.get('includeAI') === 'true';
 
-  if (!ticker) {
-    return NextResponse.json({ error: 'Ticker is required' }, { status: 400 });
+  if (!input) {
+    return NextResponse.json({ error: 'Ticker or company name is required' }, { status: 400 });
   }
 
   try {
-    const data = await fetchFinancialData(ticker);
+    // Step 1: Resolve ticker or company name
+    const resolution = await resolveTickerOrCompanyName(input, {
+      exchange: searchParams.get('exchange') || null,
+      provider: searchParams.get('provider') || 'auto',
+      forceRefresh: searchParams.get('refresh') === 'true'
+    });
+
+    // Handle ambiguous matches
+    if (resolution.confidence === 'ambiguous') {
+      return NextResponse.json({
+        error: 'ambiguous_ticker',
+        message: 'Multiple matches found for your search',
+        candidates: resolution.matches.map(m => ({
+          ticker: m.ticker,
+          name: m.name,
+          exchange: m.exchange,
+          confidence: m.confidence
+        })),
+        telemetry: resolution.telemetry
+      }, { status: 400 });
+    }
+
+    // Handle not found
+    if (!resolution.ticker) {
+      // Log analytics event
+      console.log('Symbol not found:', { input, timestamp: new Date().toISOString() });
+      
+      return NextResponse.json({
+        error: 'ticker_not_found',
+        message: `Could not resolve "${input}" to a ticker symbol`,
+        suggestion: 'Try searching with a company ticker symbol (e.g., AAPL, NVDA) or a more specific company name',
+        telemetry: resolution.telemetry
+      }, { status: 404 });
+    }
+
+    const resolvedTicker = resolution.ticker;
+
+    // Debug: Log what we resolved
+    console.log(`Resolved "${input}" to ticker: "${resolvedTicker}"`, {
+      resolvedFrom: resolution.resolvedFrom,
+      confidence: resolution.confidence
+    });
+
+    // Step 2: Fetch financial data using resolved ticker
+    let data;
+    let priceHistory = null;
+    
+    data = await fetchFinancialData(resolvedTicker);
+    // Try to fetch real-time price history if API is configured
+    if (API_KEY) {
+      const realPriceHistory = await fetchPriceHistory(resolvedTicker);
+      if (realPriceHistory) {
+        priceHistory = realPriceHistory;
+      }
+    }
+    
+    // If using demo data and don't have price history yet, get it
+    if (!priceHistory && hasDemoData(resolvedTicker)) {
+      priceHistory = getDemoData(resolvedTicker).priceHistory;
+    }
+    
     const { metrics, verdictScores } = calculateValuationMetrics(data);
     const overallValuation = calculateOverallValuation(verdictScores);
-
     const combinedSummary = generateCombinedSummary(metrics, verdictScores);
 
     const response = {
-      ticker: ticker.toUpperCase(),
+      ticker: resolvedTicker,
       companyName: data.companyName,
       sector: data.sector,
+      priceHistory: priceHistory || [],
       rawData: {
         marketCap: data.marketCap,
         enterpriseValue: data.ev,
@@ -309,11 +476,28 @@ export async function GET(request) {
         confidence: overallValuation.confidence,
         reasoning: overallValuation.reasoning
       },
-      interpretation: combinedSummary
+      interpretation: combinedSummary,
+      telemetry: resolution.telemetry
     };
+
+    // Step 3: Add AI analysis if requested and OpenAI is configured
+    if (includeAIAnalysis && isOpenAIConfigured()) {
+      try {
+        const aiAnalysis = await generateValuationAnalysis(
+          resolvedTicker,
+          data.companyName,
+          response
+        );
+        response.aiAnalysis = aiAnalysis;
+      } catch (aiError) {
+        console.error('AI analysis failed:', aiError.message);
+        response.aiAnalysisError = aiError.message;
+      }
+    }
 
     return NextResponse.json(response);
   } catch (error) {
+    console.error('Valuation lookup error:', error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

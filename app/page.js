@@ -1,12 +1,21 @@
 'use client';
 
 import { useState } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function Home() {
   const [ticker, setTicker] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
+
+  const scrollToSection = (sectionId) => {
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -15,12 +24,23 @@ export default function Home() {
     setData(null);
 
     try {
-      const response = await fetch(`/api/valuation?ticker=${ticker}`);
+      const response = await fetch(`/api/valuation?ticker=${encodeURIComponent(ticker)}`);
       const result = await response.json();
+      
       if (response.ok) {
         setData(result);
       } else {
-        setError(result.error);
+        // Handle ambiguous matches
+        if (result.error === 'ambiguous_ticker' && result.candidates) {
+          const candidateList = result.candidates
+            .map(c => `${c.ticker} (${c.exchange})`)
+            .join(', ');
+          setError(`Multiple matches found: ${candidateList}. Please be more specific.`);
+        } else if (result.error === 'ticker_not_found') {
+          setError(result.message || 'Could not resolve the company or ticker symbol. Try a different search term.');
+        } else {
+          setError(result.error || 'An error occurred');
+        }
       }
     } catch (err) {
       setError('Failed to fetch data. Please try again.');
@@ -30,22 +50,32 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
+    <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-gradient-to-b from-slate-900 to-slate-800' : 'bg-gradient-to-b from-slate-50 to-slate-100'}`}>
       {/* Navigation Bar */}
-      <nav className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-50">
+      <nav className={`${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} border-b shadow-sm sticky top-0 z-50 transition-colors duration-300`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-10">
               <h1 className="text-2xl font-bold text-blue-600">Stock Analyzer</h1>
-              <div className="hidden md:flex gap-8 text-slate-600 text-sm font-medium">
-                <a href="#" className="hover:text-slate-900 transition-colors">Home</a>
-                <a href="#" className="hover:text-slate-900 transition-colors">Screeners</a>
-                <a href="#" className="hover:text-slate-900 transition-colors">Insights</a>
+              <div className="hidden md:flex gap-8 text-sm font-medium">
+                <button onClick={() => scrollToSection('hero')} className={`${darkMode ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900'} transition-colors cursor-pointer`}>Home</button>
+                <button onClick={() => scrollToSection('metrics')} className={`${darkMode ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900'} transition-colors cursor-pointer`}>Valuation Metrics</button>
+                <button onClick={() => scrollToSection('overview')} className={`${darkMode ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900'} transition-colors cursor-pointer`}>Financial Overview</button>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <button className="px-4 py-2 text-slate-700 hover:text-slate-900 font-medium transition-colors">Login</button>
-              <button className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-all">Open Account</button>
+              {/* Dark Mode Toggle */}
+              <button
+                onClick={() => setDarkMode(!darkMode)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  darkMode
+                    ? 'bg-slate-700 text-yellow-400 hover:bg-slate-600'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+                title="Toggle dark mode"
+              >
+                {darkMode ? '☀️ Light' : '🌙 Dark'}
+              </button>
             </div>
           </div>
         </div>
@@ -54,9 +84,9 @@ export default function Home() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         {/* Hero Section */}
-        <div className="text-center mb-16">
-          <h2 className="text-5xl md:text-6xl font-bold text-slate-900 mb-6">Stock Valuation Analyzer</h2>
-          <p className="text-xl text-slate-600 mb-10 max-w-2xl mx-auto">Get comprehensive valuation insights using multiple financial metrics and multi-factor analysis.</p>
+        <div id="hero" className="text-center mb-16">
+          <h2 className={`text-5xl md:text-6xl font-bold mb-6 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Stock Valuation Analyzer</h2>
+          <p className={`text-xl mb-10 max-w-2xl mx-auto ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Get comprehensive valuation insights using multiple financial metrics and multi-factor analysis.</p>
         </div>
 
         {/* Search Section */}
@@ -68,7 +98,11 @@ export default function Home() {
                 value={ticker}
                 onChange={(e) => setTicker(e.target.value)}
                 placeholder="Search for companies and stocks to analyse"
-                className="w-full px-6 py-4 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-slate-700 bg-white font-medium"
+                className={`w-full px-6 py-4 border-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-medium transition-colors ${
+                  darkMode
+                    ? 'bg-slate-700 text-white border-slate-600 placeholder-slate-400'
+                    : 'bg-white text-slate-700 border-slate-300 placeholder-slate-500'
+                }`}
                 required
               />
               <button
@@ -83,64 +117,154 @@ export default function Home() {
         </form>
 
         {error && (
-          <div className="bg-red-50 border-2 border-red-200 text-red-800 px-6 py-4 rounded-lg mb-8 shadow-sm">
-            <p className="font-bold text-red-900">Error</p>
+          <div className={`border-2 px-6 py-4 rounded-lg mb-8 shadow-sm ${
+            darkMode
+              ? 'bg-red-900 border-red-700 text-red-200'
+              : 'bg-red-50 border-red-200 text-red-800'
+          }`}>
+            <p className={`font-bold ${darkMode ? 'text-red-100' : 'text-red-900'}`}>Error</p>
             <p className="mt-1">{error}</p>
           </div>
         )}
 
         {data && (
           <div className="space-y-8">
-            {/* Company Header Card */}
-            <div className="bg-white rounded-lg shadow-md border border-slate-200 p-10">
-              <div className="flex items-start justify-between mb-6">
+            {/* Real-Time Data Notice */}
+            <div className={`border-2 px-6 py-4 rounded-lg shadow-sm ${
+              darkMode
+                ? 'bg-green-900 border-green-700 text-green-200'
+                : 'bg-green-50 border-green-300 text-green-900'
+            }`}>
+              <p className={`font-semibold ${darkMode ? 'text-green-100' : ''}`}>✓ Real-Time Data</p>
+              <p className="mt-1 text-sm">Stock prices and financial data are fetched from live market feeds.</p>
+            </div>
+
+            {/* Company Header Card - Horizontal Layout */}
+            <div className={`rounded-lg shadow-md border p-10 transition-colors ${
+              darkMode
+                ? 'bg-slate-700 border-slate-600'
+                : 'bg-white border-slate-200'
+            }`}>
+              <div className="flex items-center gap-12 mb-8">
                 <div>
-                  <h3 className="text-4xl font-bold text-slate-900">{data.ticker}</h3>
-                  <p className="text-slate-600 text-xl mt-2">{data.companyName}</p>
-                  <p className="text-slate-500 text-sm mt-2 bg-slate-100 inline-block px-3 py-1 rounded-full">{data.sector}</p>
+                  <h3 className="text-6xl font-bold text-blue-600">{data.ticker}</h3>
+                </div>
+                <div className={`flex-1 border-l-2 pl-10 ${darkMode ? 'border-slate-600' : 'border-slate-200'}`}>
+                  <p className={`text-lg font-semibold mb-2 ${darkMode ? 'text-white' : 'text-slate-900'}`}>{data.companyName}</p>
+                  <p className="text-sm">
+                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                      darkMode
+                        ? 'bg-blue-900 text-blue-200'
+                        : 'bg-blue-100 text-blue-800'
+                    }`}>{data.sector}</span>
+                  </p>
                 </div>
               </div>
+
+              {/* Stock Price Chart */}
+              {data.priceHistory && data.priceHistory.length > 0 && (
+                <div className={`mt-10 pt-10 border-t ${darkMode ? 'border-slate-600' : 'border-slate-200'}`}>
+                  <h4 className={`text-lg font-semibold mb-6 ${darkMode ? 'text-white' : 'text-slate-900'}`}>7-Day Price History</h4>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={data.priceHistory}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#475569' : '#e2e8f0'} />
+                      <XAxis 
+                        dataKey="displayDate" 
+                        stroke={darkMode ? '#cbd5e1' : '#64748b'}
+                        style={{ fontSize: '12px' }}
+                      />
+                      <YAxis 
+                        stroke={darkMode ? '#cbd5e1' : '#64748b'}
+                        style={{ fontSize: '12px' }}
+                        domain={['dataMin - 5', 'dataMax + 5']}
+                        label={{ value: 'Price ($)', angle: -90, position: 'insideLeft' }}
+                      />
+                      <Tooltip 
+                        contentStyle={{
+                          backgroundColor: darkMode ? '#1e293b' : '#fff',
+                          border: darkMode ? '1px solid #475569' : '1px solid #e2e8f0',
+                          borderRadius: '8px',
+                          color: darkMode ? '#e2e8f0' : '#1e293b'
+                        }}
+                        formatter={(value) => `$${value.toFixed(2)}`}
+                        labelStyle={{ color: darkMode ? '#e2e8f0' : '#1e293b' }}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="price" 
+                        stroke="#2563eb" 
+                        strokeWidth={3}
+                        dot={{ fill: '#2563eb', r: 5 }}
+                        activeDot={{ r: 7 }}
+                        isAnimationActive={true}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
 
             {/* Verdict Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className={`rounded-lg p-8 shadow-md border-2 font-medium ${
-                data.overall.verdict === 'undervalued' ? 'bg-green-50 border-green-300' : 
-                data.overall.verdict === 'overvalued' ? 'bg-red-50 border-red-300' : 
-                'bg-yellow-50 border-yellow-300'
+              <div className={`rounded-lg p-8 shadow-md border-2 font-medium transition-colors ${
+                darkMode ? 'border-slate-600' : 'border-slate-200'
+              } ${
+                data.overall.verdict === 'undervalued' 
+                  ? darkMode ? 'bg-green-900 border-green-700' : 'bg-green-50 border-green-300'
+                  : data.overall.verdict === 'overvalued'
+                  ? darkMode ? 'bg-red-900 border-red-700' : 'bg-red-50 border-red-300'
+                  : darkMode ? 'bg-yellow-900 border-yellow-700' : 'bg-yellow-50 border-yellow-300'
               }`}>
-                <p className="text-slate-600 text-sm font-semibold mb-3 uppercase tracking-wide">Valuation Status</p>
+                <p className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+                  darkMode ? 'text-slate-400' : 'text-slate-600'
+                }`}>Valuation Status</p>
                 <p className={`text-4xl font-bold mb-4 ${
-                  data.overall.verdict === 'undervalued' ? 'text-green-700' : 
-                  data.overall.verdict === 'overvalued' ? 'text-red-700' : 
-                  'text-yellow-700'
+                  data.overall.verdict === 'undervalued' ? (darkMode ? 'text-green-300' : 'text-green-700') : 
+                  data.overall.verdict === 'overvalued' ? (darkMode ? 'text-red-300' : 'text-red-700') : 
+                  (darkMode ? 'text-yellow-300' : 'text-yellow-700')
                 }`}>
                   {data.overall.verdict.toUpperCase()}
                 </p>
-                <p className="text-slate-700 text-lg font-bold">{data.overall.confidence}% Confidence</p>
+                <p className={`text-lg font-bold ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>{data.overall.confidence}% Confidence</p>
               </div>
 
-              <div className="rounded-lg p-8 shadow-md border-2 border-blue-300 bg-blue-50 col-span-1 md:col-span-2">
-                <p className="text-slate-600 text-sm font-semibold mb-3 uppercase tracking-wide">Analysis Summary</p>
-                <p className="text-slate-800 font-semibold text-lg">{data.interpretation}</p>
+              <div className={`rounded-lg p-8 shadow-md border-2 col-span-1 md:col-span-2 transition-colors ${
+                darkMode
+                  ? 'bg-blue-900 border-blue-700 text-blue-200'
+                  : 'bg-blue-50 border-blue-300'
+              }`}>
+                <p className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+                  darkMode ? 'text-blue-300' : 'text-slate-600'
+                }`}>Analysis Summary</p>
+                <p className={`font-semibold text-lg ${darkMode ? 'text-blue-100' : 'text-slate-800'}`}>{data.interpretation}</p>
               </div>
             </div>
 
             {/* Key Metrics Grid */}
-            <div className="bg-white rounded-lg shadow-md border border-slate-200 p-10">
-              <h3 className="text-2xl font-bold text-slate-900 mb-8">Valuation Metrics</h3>
+            <div id="metrics" className={`rounded-lg shadow-md border p-10 transition-colors ${
+              darkMode
+                ? 'bg-slate-700 border-slate-600'
+                : 'bg-white border-slate-200'
+            }`}>
+              <h3 className={`text-2xl font-bold mb-8 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Valuation Metrics</h3>
               <div className="space-y-3">
                 {data.verdicts && data.verdicts.map((metric, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-5 bg-slate-50 rounded-lg border border-slate-200 hover:shadow-md transition-shadow">
+                  <div key={idx} className={`flex items-center justify-between p-5 rounded-lg border hover:shadow-md transition-shadow ${
+                    darkMode
+                      ? 'bg-slate-600 border-slate-500'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}>
                     <div>
-                      <p className="text-slate-800 font-bold text-lg">{metric.metric}</p>
-                      <p className="text-slate-600 text-sm mt-1">Value: <span className="font-semibold text-slate-800">{metric.value}</span></p>
+                      <p className={`font-bold text-lg ${darkMode ? 'text-white' : 'text-slate-800'}`}>{metric.metric}</p>
+                      <p className={`text-sm mt-1 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>Value: <span className={`font-semibold ${darkMode ? 'text-white' : 'text-slate-800'}`}>{metric.value}</span></p>
                     </div>
                     <div>
                       <span className={`px-4 py-2 rounded-full text-sm font-bold ${
-                        metric.verdict === 'undervalued' ? 'bg-green-200 text-green-800' :
-                        metric.verdict === 'overvalued' ? 'bg-red-200 text-red-800' :
-                        'bg-yellow-200 text-yellow-800'
+                        metric.verdict === 'undervalued' 
+                          ? darkMode ? 'bg-green-900 text-green-300' : 'bg-green-200 text-green-800'
+                          : metric.verdict === 'overvalued'
+                          ? darkMode ? 'bg-red-900 text-red-300' : 'bg-red-200 text-red-800'
+                          : darkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-200 text-yellow-800'
                       }`}>
                         {metric.verdict.charAt(0).toUpperCase() + metric.verdict.slice(1)}
                       </span>
@@ -151,32 +275,72 @@ export default function Home() {
             </div>
 
             {/* Valuation Range */}
-            <div className="bg-white rounded-lg shadow-md border border-slate-200 p-10">
-              <h3 className="text-2xl font-bold text-slate-900 mb-8">Financial Overview</h3>
+            <div id="overview" className={`rounded-lg shadow-md border p-10 transition-colors ${
+              darkMode
+                ? 'bg-slate-700 border-slate-600'
+                : 'bg-white border-slate-200'
+            }`}>
+              <h3 className={`text-2xl font-bold mb-8 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Financial Overview</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div className="p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200">
-                  <p className="text-slate-700 text-sm mb-2 font-semibold uppercase tracking-wide">Market Capitalization</p>
-                  <p className="text-3xl font-bold text-slate-900">${(data.rawData.marketCap / 1e9).toFixed(2)}B</p>
+                <div className={`p-6 rounded-lg border transition-colors ${
+                  darkMode
+                    ? 'bg-gradient-to-br from-blue-900 to-blue-800 border-blue-700'
+                    : 'bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200'
+                }`}>
+                  <p className={`text-sm mb-2 font-semibold uppercase tracking-wide ${
+                    darkMode ? 'text-blue-300' : 'text-slate-700'
+                  }`}>Market Capitalization</p>
+                  <p className={`text-3xl font-bold ${darkMode ? 'text-blue-100' : 'text-slate-900'}`}>${(data.rawData.marketCap / 1e9).toFixed(2)}B</p>
                 </div>
-                <div className="p-6 bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg border border-purple-200">
-                  <p className="text-slate-700 text-sm mb-2 font-semibold uppercase tracking-wide">Enterprise Value</p>
-                  <p className="text-3xl font-bold text-slate-900">${(data.rawData.enterpriseValue / 1e9).toFixed(2)}B</p>
+                <div className={`p-6 rounded-lg border transition-colors ${
+                  darkMode
+                    ? 'bg-gradient-to-br from-purple-900 to-purple-800 border-purple-700'
+                    : 'bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200'
+                }`}>
+                  <p className={`text-sm mb-2 font-semibold uppercase tracking-wide ${
+                    darkMode ? 'text-purple-300' : 'text-slate-700'
+                  }`}>Enterprise Value</p>
+                  <p className={`text-3xl font-bold ${darkMode ? 'text-purple-100' : 'text-slate-900'}`}>${(data.rawData.enterpriseValue / 1e9).toFixed(2)}B</p>
                 </div>
-                <div className="p-6 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border border-green-200">
-                  <p className="text-slate-700 text-sm mb-2 font-semibold uppercase tracking-wide">Net Income</p>
-                  <p className="text-3xl font-bold text-slate-900">${(data.rawData.netIncome / 1e9).toFixed(2)}B</p>
+                <div className={`p-6 rounded-lg border transition-colors ${
+                  darkMode
+                    ? 'bg-gradient-to-br from-green-900 to-green-800 border-green-700'
+                    : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
+                }`}>
+                  <p className={`text-sm mb-2 font-semibold uppercase tracking-wide ${
+                    darkMode ? 'text-green-300' : 'text-slate-700'
+                  }`}>Net Income</p>
+                  <p className={`text-3xl font-bold ${darkMode ? 'text-green-100' : 'text-slate-900'}`}>${(data.rawData.netIncome / 1e9).toFixed(2)}B</p>
                 </div>
-                <div className="p-6 bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg border border-orange-200">
-                  <p className="text-slate-700 text-sm mb-2 font-semibold uppercase tracking-wide">Revenue</p>
-                  <p className="text-3xl font-bold text-slate-900">${(data.rawData.revenue / 1e9).toFixed(2)}B</p>
+                <div className={`p-6 rounded-lg border transition-colors ${
+                  darkMode
+                    ? 'bg-gradient-to-br from-orange-900 to-orange-800 border-orange-700'
+                    : 'bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200'
+                }`}>
+                  <p className={`text-sm mb-2 font-semibold uppercase tracking-wide ${
+                    darkMode ? 'text-orange-300' : 'text-slate-700'
+                  }`}>Revenue</p>
+                  <p className={`text-3xl font-bold ${darkMode ? 'text-orange-100' : 'text-slate-900'}`}>${(data.rawData.revenue / 1e9).toFixed(2)}B</p>
                 </div>
-                <div className="p-6 bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-lg border border-cyan-200">
-                  <p className="text-slate-700 text-sm mb-2 font-semibold uppercase tracking-wide">Operating Cash Flow</p>
-                  <p className="text-3xl font-bold text-slate-900">${(data.rawData.operatingCashFlow / 1e9).toFixed(2)}B</p>
+                <div className={`p-6 rounded-lg border transition-colors ${
+                  darkMode
+                    ? 'bg-gradient-to-br from-cyan-900 to-cyan-800 border-cyan-700'
+                    : 'bg-gradient-to-br from-cyan-50 to-cyan-100 border-cyan-200'
+                }`}>
+                  <p className={`text-sm mb-2 font-semibold uppercase tracking-wide ${
+                    darkMode ? 'text-cyan-300' : 'text-slate-700'
+                  }`}>Operating Cash Flow</p>
+                  <p className={`text-3xl font-bold ${darkMode ? 'text-cyan-100' : 'text-slate-900'}`}>${(data.rawData.operatingCashFlow / 1e9).toFixed(2)}B</p>
                 </div>
-                <div className="p-6 bg-gradient-to-br from-pink-50 to-pink-100 rounded-lg border border-pink-200">
-                  <p className="text-slate-700 text-sm mb-2 font-semibold uppercase tracking-wide">Total Assets</p>
-                  <p className="text-3xl font-bold text-slate-900">${(data.rawData.totalAssets / 1e9).toFixed(2)}B</p>
+                <div className={`p-6 rounded-lg border transition-colors ${
+                  darkMode
+                    ? 'bg-gradient-to-br from-pink-900 to-pink-800 border-pink-700'
+                    : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200'
+                }`}>
+                  <p className={`text-sm mb-2 font-semibold uppercase tracking-wide ${
+                    darkMode ? 'text-pink-300' : 'text-slate-700'
+                  }`}>Total Assets</p>
+                  <p className={`text-3xl font-bold ${darkMode ? 'text-pink-100' : 'text-slate-900'}`}>${(data.rawData.totalAssets / 1e9).toFixed(2)}B</p>
                 </div>
               </div>
             </div>
